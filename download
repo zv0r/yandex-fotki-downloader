@@ -1,0 +1,45 @@
+#!/bin/bash
+
+# $1 - user, $2 - album_id, $3 - link_to_iids (if photos qt 100)
+download_photos() {
+  echo ""
+  if [ -n "$3" ]; then
+    images_url="$3"
+  else
+    # Сбросить счетчик
+    NUM=1
+    images_url="http://api-fotki.yandex.ru/api/users/$1/album/$2/photos/"
+  fi
+  # возможные размеры: _orig, _XS, _L, _XXS, _XL
+  iids=`curl --silent $images_url | grep 'http.*_S' | sed -r 's!.*(http.*)_S.*!\1_orig!'`
+  album_name=`curl --silent $images_url | sed -n '/title/{p;q;}' | sed 's/.*<title>//' | sed 's/<\/title>.*//'`
+  echo "Альбом: $album_name"
+  mkdir -p "$1-images/$album_name"
+  for i in ${iids[@]}; do
+    name=`printf %04d.%s ${NUM%.*} jpg`
+    filename="$1-images/$album_name/$name"
+    local_file_size=$(du -b "$filename" 2>/dev/null | awk '{print $1}')
+    remote_file_size=$(curl -sI "$i" | grep Content-Length | sed 's/[^0-9]//g')
+    if [ "$local_file_size" == "$remote_file_size" ]; then
+      echo "Файл $filename уже был скачан"
+    else
+      rm -f "$filename"
+      echo "Загрузка $filename"
+      wget "$i" -O "$1-images/$album_name/$name"
+    fi
+    NUM=$(($NUM + 1))
+  done
+  over100=`curl --silent $images_url | grep ' rel="next" />' | sed -r 's/.\ rel=.*//' | sed -r 's/.*<link href="//'`
+  if [ -n "$over100" ]; then
+    echo "В этом альбоме больше ста изображений, смотрим следующую страницу"
+    download_photos "$1" "$2" "$over100"
+  fi
+}
+
+user=$1
+mkdir -p "$user-images"
+aurl="http://api-fotki.yandex.ru/api/users/$user/albums/"
+aids=`curl --silent $aurl | grep 'urn' | sed -r 's![^0-9]*!!g'`
+for aid in ${aids[@]}; do
+  download_photos "$user" "$aid"
+done
